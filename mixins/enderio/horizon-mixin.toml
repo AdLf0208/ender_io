@@ -1,0 +1,91 @@
+[mod]
+id = "enderio"
+version = "0.1.0"
+priority = 100
+
+[compatibility]
+horizon_revision = "1d63e0a5a37a7a708eb0b32b49bf0dfeb28ed8a9"
+
+# The pure item-conduit logic (standalone crate lib, injected as
+# `crate::game::enderio`): connection rules, per-side configuration, the
+# network cycle and insert order.
+[[module]]
+id = "runtime"
+file = "crates/horizon-client/src/game.rs"
+name = "enderio"
+source = "runtime.rs"
+
+# Game-side glue: the conduit's block entity, its connection state and the
+# item transfer, plus the `/enderio` commands.
+[[module]]
+id = "state"
+file = "crates/horizon-client/src/game.rs"
+name = "enderio_state"
+source = "support.rs"
+
+# A placed conduit gets a block entity (its per-side configuration is saved
+# there, as upstream's node data is).
+# The content half is inside this bundle (`data/enderio-content.hmod`, the built
+# `content/enderio.hmod`): this writes it to `.horizon-cache/` and appends it to the dev-mod list, so
+# one `.hnmod` installs the blocks/items and the code. The registry keeps one file per project, so a
+# split port could not be listed; AE2 ships the same pattern (`docs/native-mods.md`, "Data files").
+[[injection]]
+id = "embedded-content"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::mods::content_root"
+helper = "embedded_content.rs"
+bindings = [
+  { name = "root", ty = "&std::path::Path", value = "root" },
+  { name = "enabled", ty = "&std::collections::BTreeSet<String>", value = "enabled" },
+  { name = "dev", ty = "&[std::path::PathBuf]", value = "dev" },
+]
+
+[[injection]]
+id = "block-entity"
+hook = "block_entity"
+hook_version = 1
+kind = "HEAD"
+helper = "block_entity.rs"
+bindings = [
+  { name = "block", ty = "&str", value = "block" },
+  { name = "entity", ty = "&mut Option<(String, horizon_world::nbt::Compound)>", value = "entity" },
+]
+
+# After the level's tick: recompute each conduit's connection state from its
+# neighbours and, once per network cycle, move items between the inventories
+# it reaches.
+[[injection]]
+id = "level-tick-post"
+hook = "level_tick_post"
+hook_version = 1
+kind = "HEAD"
+helper = "level_tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "dimension", ty = "&str", value = "dimension" },
+]
+
+# `/enderio config|info`.
+[[injection]]
+id = "register-commands"
+hook = "register_commands"
+hook_version = 1
+kind = "HEAD"
+helper = "register.rs"
+bindings = [
+  { name = "commands", ty = "&mut Vec<NativeCommand>", value = "commands" },
+]
+
+[[injection]]
+id = "perform-command"
+hook = "perform_command"
+hook_version = 1
+kind = "HEAD"
+helper = "perform.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "player", ty = "&NativeServerPlayer", value = "player" },
+  { name = "command", ty = "&str", value = "command" },
+  { name = "ran", ty = "&mut bool", value = "ran" },
+]

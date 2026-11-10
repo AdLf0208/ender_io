@@ -1,0 +1,12 @@
+# Port-owned content mod for Ender IO 8.2.12-beta (CC0/Unlicense,
+# Team-EnderIO/EnderIO): the conduit bundle block and its item, the item
+# conduit's models, texture and lang entries. The item transfer is the native
+# half in ports/enderio/mixins.
+id = "enderio"
+name = "Ender IO"
+version = "8.2.12-beta"
+description = "Compact conduits, painted things and all sorts of stuff and bling"
+authors = ["CrazyPants", "tterrag", "HenryLoenwind", "MatthiasM", "CyanideX", "EpicSquid", "Rover656", "HypherionSA", "liliandev", "Ferri_Arnus", "dphaldes"]
+api = "0.2"
+side = "both"
+capabilities = ["registries"]

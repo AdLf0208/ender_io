@@ -1,0 +1,20 @@
+{
+  "textures": {
+    "0": "enderio:block/conduit/item",
+    "particle": "enderio:block/conduit/item"
+  },
+  "elements": [
+    {
+      "from": [6.5, 6.5, 6.5],
+      "to": [9.5, 9.5, 9.5],
+      "faces": {
+        "north": { "uv": [10, 10, 16, 16], "texture": "#0" },
+        "east": { "uv": [10, 10, 16, 16], "texture": "#0" },
+        "south": { "uv": [10, 10, 16, 16], "texture": "#0" },
+        "west": { "uv": [10, 10, 16, 16], "texture": "#0" },
+        "up": { "uv": [10, 10, 16, 16], "texture": "#0" },
+        "down": { "uv": [10, 10, 16, 16], "texture": "#0" }
+      }
+    }
+  ]
+}
