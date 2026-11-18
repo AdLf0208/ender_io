@@ -1,0 +1,11 @@
+{
+  "multipart": [
+    { "apply": { "model": "enderio:block/conduit_core" } },
+    { "when": { "down": "true" }, "apply": { "model": "enderio:block/conduit_arm" } },
+    { "when": { "up": "true" }, "apply": { "model": "enderio:block/conduit_arm", "x": 180 } },
+    { "when": { "north": "true" }, "apply": { "model": "enderio:block/conduit_arm", "x": 90 } },
+    { "when": { "south": "true" }, "apply": { "model": "enderio:block/conduit_arm", "x": 270 } },
+    { "when": { "east": "true" }, "apply": { "model": "enderio:block/conduit_arm", "z": 90 } },
+    { "when": { "west": "true" }, "apply": { "model": "enderio:block/conduit_arm", "z": 270 } }
+  ]
+}
