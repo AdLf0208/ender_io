@@ -1,56 +1,19 @@
-# Ender IO for Horizon
+# Ender IO — a Horizon port
 
-A native Horizon port of **Ender IO 8.2.12-beta** (`Team-EnderIO/EnderIO`,
-**CC0** in the jar's `mods.toml`, **Unlicense** text in the repository): **slice 1**,
-the **item conduit** — a conduit block whose six sides connect to other conduits
-and to inventories, with the per-side extract/insert configuration upstream has,
-moving up to 4 items every 20 ticks between the inventories it joins.
+**Ender IO** is a Minecraft mod. Ender IO for Modern Minecraft. This repository is a **port of it to [Horizon](https://github.com/horizon-rust/horizon)**, the Rust engine for Minecraft Java 26.3. It carries the complete source of the port plus the content files it ships, and installs as a single `.hmod` package.
 
-This is one flat SDK package (`api = "0.2"`): the code in `src/` and the carried
-content in `assets/` and `data/` travel in the same `.hmod`.
+Upstream: [Team-EnderIO/EnderIO](https://github.com/Team-EnderIO/EnderIO) — licence **Unlicense**.
 
-**LOCAL-ONLY** until the maintainer approves publishing (ARCHITECTURE.md §8);
-CC0/Unlicense needs no permission to publish, only the campaign's approval. The
-content of this slice is carried from the exact ATM10 jar — provenance in
-`../_shared/carry-work/enderio/SOURCE.md` and `LICENSE-NOTICE.md`.
+| | |
+|---|---|
+| Upstream mod | Ender IO ([source](https://github.com/Team-EnderIO/EnderIO)) |
+| Ported to | Horizon 0b14f8a, Minecraft Java 26.3, mod API `0.2` |
+| Package | `enderio.hmod` (install it with the Horizon launcher) |
+| Licence | **Unlicense** — the upstream mod's licence; see [Licence and credit](#licence-and-credit) |
 
-- SDK nightly `0b14f8acfd97fa2c750e42795249dcc981178ca4`, mixins
-  `e59da9094f0c2fdda6c627fe9eff22dec6a906f0`, for Minecraft 26.3. The pin is
-  `[native]` in `horizon-mod.toml`; the launcher compiles against it.
-- Class/tier: `content` / `deep` (per `horizon/docs/modpacks.md`). A `deep` mod is
-  a campaign of slices, so this is slice 1: carried content (block, item, models,
-  texture, lang, loot, tab) plus the conduit's logic (block entity, level tick,
-  commands), not a data-only carry.
-- Upstream behaviour and the slice boundary: [notes.md](notes.md) and
-  [FINDINGS.md](FINDINGS.md).
+## What this port implements
 
-## Layout
-
-```text
-horizon-mod.toml      the only manifest: id/name/version/api/side/capabilities + [native] pin
-Cargo.toml            one crate; its only dependency is horizon-mod-api from .horizon/sdk/
-src/lib.rs            the one #[mod_api::horizon_mod] impl Hooks
-src/support.rs        the glue: the conduit's block entity part, the level tick, the commands
-src/runtime.rs        the pure rules (faces, configuration, cycle, insert order) and their tests
-assets/enderio/       the carried blockstates, models, texture, lang
-data/enderio/         the carried block, creative tab and loot table
-tools/e2e.sh          the in-game scenario (needs a launcher-built game; see notes.md)
-enderio.hmod          the deliverable
-```
-
-## Using it
-
-- Place conduits between inventories; a conduit joins another conduit or any
-  block that has an item container on the touching side.
-- By default every connected side **extracts** and none **inserts** (upstream's
-  `ItemConduitConnectionConfig.DEFAULT`). Turn insertion on for the destination
-  side: `/enderio config <x> <y> <z> <down|up|north|south|west|east> insert on`.
-- `/enderio info <x> <y> <z>` prints the connections and the configuration.
-- `/enderio config … <insert|extract|round> <on|off>` sets one option; `round`
-  spreads the source over several destinations.
-- The conduit moves up to 4 items once a second per extracting side.
-
-## What this slice does not do
+### What this slice does not do
 
 Filters, speed tiers (enhanced/vibrant conduits), priority and dye channels; the
 conduit screen and redstone control; the bundle, facades, the Yeta Wrench and
@@ -59,16 +22,47 @@ machine; the mobs, armour and items; the alloy system (so there is no crafting
 recipe yet); and the block-entity renderer for the arms. Each is a later slice —
 the full list is in [notes.md](notes.md).
 
-## Building
+## Not yet ported
 
-```sh
-cargo test --offline                                  # the rules and the glue's codecs
-cargo clippy --all-targets -- -D warnings
-cargo fmt --check                                     # not --all: that checks the fetched SDK
-rm -f Cargo.lock && cargo horizon-mod build            # -> target/horizon-mod/enderio.hmod
-cargo horizon-mod check enderio.hmod
-cargo horizon-mod fits enderio.hmod --build nightly
+- item **filters** (extract/insert filter slots), **speed tiers**
+- the **conduit screen** (menu/slots/toggles), the redstone control;
+- the **bundle** (several types in one block), **facades**, the Yeta Wrench
+- **energy, fluid and redstone conduits**;
+- every **machine** (alloy smelter, sag mill, Stirling generator, soul
+- **mobs, armour and items** (ender armour/weapons, staffs, electromagnet,
+- the **alloy system** and therefore the conduit recipe;
+- a **block-entity renderer** for the arms (cosmetic; the model is static).
+
+## Installing
+
+1. Install the [Horizon launcher](https://github.com/horizon-rust/horizon/releases) (0.2.70 or newer).
+2. Add `enderio.hmod` to the instance's mods.
+3. The package is pinned to a specific Horizon build; the launcher checks that pin.
+
+## Licence and credit
+
+Ender IO was created by its upstream authors; the code, models and assets in the original mod
+remain theirs and are used here under **Unlicense**. The Rust in this repository is a clean-room
+rewrite for Horizon, not a translation of the original source.
+
+- `LICENSE` — the upstream licence text.
+- `LICENSE-NOTICE.md` — what this port carries and where it came from.
+- The upstream project: https://github.com/Team-EnderIO/EnderIO
+
+## Technical details
+
+```
+horizon-mod.toml   package manifest (id, version, api, [native] pin)
+Cargo.toml         the crate; depends on `horizon-mod-api` from the fetched SDK
+src/               lib.rs (the one `impl Hooks`), runtime.rs (pure logic + tests), glue
+assets/ data/      the content the package ships
+tools/             content generators and the e2e scenario
 ```
 
-`.horizon/sdk/` is fetched per clone and never packed; `Cargo.lock` must not be
-packed either (it changes the artifact).
+- Build: `cargo horizon-mod build` (packages; it does not compile against the game).
+- Test: `cargo test`, `cargo clippy --all-targets -- -D warnings`.
+- In-game: `ports/tools/launcher-game.sh run enderio` in the campaign tree, or install the
+  `.hmod` and play; the harness scenario is `tools/e2e.sh`.
+
+This repository is generated from the campaign's port at `ports/enderio/`; the port's own
+`notes.md` is the full record (decisions, traps, evidence).
