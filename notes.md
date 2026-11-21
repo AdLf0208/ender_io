@@ -26,7 +26,9 @@ data-only carry and not a whole-mod port.
 > built and proved. What moved, the hook table, the 0.2.0 ladder and the new
 > traps are in [`## Migration to the SDK format`](#migration-to-the-sdk-format-020-2026-11-18).
 
-**Licence:** CC0-1.0 / Unlicense → **rank 0** (public domain). Local-only until
+**Licence:** Unlicense → **rank 0** (public domain); the jar declares CC0, an
+equivalent dedication, and 0.2.1 states one licence for the whole package (see
+`## Review fixes (2026-11-18)`). Local-only until
 the maintainer approves publishing (ARCHITECTURE.md §8); rank 0 carries no
 downstream obligation. **Why now:** the licence-first, core-before-add-ons
 queue puts it at rank 8 (`python3 ports/tools/port_queue.py`): rank 0, a core
@@ -89,7 +91,8 @@ Not implemented (planned slices, see `FINDINGS.md`):
 
 1. item **filters** (extract/insert filter slots), **speed tiers**
    (enhanced/vibrant item conduits), **priority** and **dye channels**;
-2. the **conduit screen** (menu/slots/toggles), the redstone control;
+2. the **conduit screen** (menu/slots/toggles) — the redstone control it
+   configures **is ported** since 0.2.2 (`/enderio config … redstone <mode>`);
 3. the **bundle** (several types in one block), **facades**, the Yeta Wrench
    and Conduit Probe, waterlogging;
 4. **energy, fluid and redstone conduits**;
@@ -320,7 +323,8 @@ package), `LICENSE-NOTICE.md` (the provenance, packed at the root), `.gitignore`
 - `[native] game = "26.3"`, `horizon = "0b14f8a…"`, `mixins = "e59da90…"` replace
   `[compatibility]` and the bundle's `horizon-native.json` pins.
 - `license`, `homepage`, `issues` are **not** `horizon-mod.toml` fields (the builder strips them);
-  the licence lives in `Cargo.toml` (`CC0-1.0`) and in `LICENSE`/`LICENSE-NOTICE.md`.
+  the licence lives in `Cargo.toml` (`Unlicense`, one licence for code and content) and in
+  `LICENSE`/`LICENSE-NOTICE.md`.
 
 ### Helper → hook table (every former injection and module)
 
@@ -471,3 +475,221 @@ Skills: superpowers/using-superpowers, brainstorming, writing-plans, test-driven
 > Package: 20 entries, **48,460 B**, sha256
 > `322251413fa6d3723d7c8a7a798b033dabf916a1aa18c0415a88ec0d621ff1c4`; `check` and `fits` exit 0.
 > No 0.2.0 in-game run: the launcher is not installed in this environment (gap 1).
+
+## Review fixes (2026-11-18)
+
+Source review of PR **#1252** (`var/review/1252-enderio.md`): one authorization finding and one
+licence mismatch, both fixed in **0.2.1**. The first in-game run of the 0.2.x package (also done
+here) additionally exposed a carried loot table in the 1.21.1 shape, fixed below with the
+assertion that proves it.
+
+| # | Finding (`file:line`) | What a player could do | Fix | Test that pins it |
+|---|---|---|---|---|
+| 1 | `src/support.rs:462` — level-0 `config` on any loaded conduit | a player set another player's conduit's per-side extraction/insertion (and round robin) at coordinates they chose, anywhere in the level, with no distance or access check — the persisted flags at `:564–580` disable or redirect that network's item transfers | `declare_commands` registers **both** usages with `Command::op(…, 2)`: `config` writes and `info` reads the same configuration of another player's conduit. The server refuses them below game-master permission before any listener runs. Upstream's own controls are the conduit screen and the probe, neither of which is ported, so both are operator diagnostics | `support::tests::the_conduit_commands_are_operator_only` — RED on the 0.2.0 registration (`left: 0, right: 2`, `evidence/enderio/review-test-red.log`), GREEN after |
+| 2 | `mods/enderio.toml:27` + `Cargo.toml:12` — entry said Unlicense, package declared CC0-1.0 for the Rust half | — (a listing/consistency defect: the same archive told two licences) | **One licence for the whole package: `Unlicense`.** `Cargo.toml` now says `license = "Unlicense"` (was `CC0-1.0`), and `LICENSE-NOTICE.md` states the port and the carried content are released under the Unlicense — the same SPDX id the entry lists and the same text upstream's repository ships (`LICENSE` at the package root is that text). The jar's own `license="CC0"` remains recorded as the original's dedication; CC0 and the Unlicense are equivalent public-domain dedications, and nothing here adds a restriction | package-level: `Cargo.toml:13`, `LICENSE-NOTICE.md` and `LICENSE` now agree; the rebuilt package carries them |
+
+### Carried-data defect the first run exposed (fixed, not reproduced)
+
+The conduit's loot table still had the 1.21.1 plural list
+`"conditions": [{"condition": "minecraft:survives_explosion"}]`, which 26.3 parses to **false**, so
+a broken conduit dropped nothing (the campaign's documented trap,
+`ports/_shared/AGENT_MOD_STRUCTURE.md` §6). It is now the singular typed condition
+`"condition": {"type": "minecraft:survives_explosion"}`, like powah's carried tables.
+
+The e2e's new section **F** proves it: a conduit is placed, the player switches to survival (a
+creative break drops nothing by design), `ctl break` reports
+`"drops": {"enderio:conduit": 1}` and one `enderio:conduit` item entity is on the ground. With the
+0.2.0 bytes the same section fails (`"drops": {}`); that run is why F exists. Nothing was removed
+from the scenario: A–E are unchanged.
+
+### Verification (0.2.1)
+
+| Step | Command | Result |
+|---|---|---|
+| unit tests | `cargo test` | **20 passed**, 0 failed (`evidence/enderio/sdk-test.log`) |
+| lints | `cargo clippy --all-targets -- -D warnings` | exit 0, no warning (`evidence/enderio/sdk-clippy.log`) |
+| formatting | `cargo fmt --check` | exit 0, empty (`evidence/enderio/sdk-fmt.log`) |
+| package, twice | `rm -f Cargo.lock; cargo horizon-mod build` ×2, `cmp` | **byte-identical**, 49,161 B (`evidence/enderio/sdk-build{,-second}.log`) |
+| registry check | `cargo horizon-mod check enderio.hmod` | **exit 0**, 49,161 B, SHA-256 `d85004c4…12f3ee` (`evidence/enderio/sdk-check.log`) |
+| fits the build | `cargo horizon-mod fits enderio.hmod --build nightly` | `Ender IO: / 0b14f8a  made for`, **exit 0** (`evidence/enderio/sdk-fits.log`) |
+| in-game | `ports/tools/launcher-game.sh run enderio` | `PASS: …` + `EXIT:0` (`evidence/enderio-e2e/e2e-launcher.log`) |
+| control (same Nightly, no package) | `GAME=$CONTROL_GAME … bash ports/enderio/tools/e2e.sh` | `FAIL: expected 'Conduit: links west,east', got ''` + `EXIT:1` |
+| selftest | `SELFTEST=1 …` | `FAIL: SELFTEST: the source chest is empty (5 stone moved), so the check is alive` + `EXIT:1` |
+| log gate | `python3 ports/tools/check-e2e-logs.py enderio-e2e --strict` | `logs=3 ok=3 missing-exit=0 bad-exit=0`, exit 0 |
+
+Harness-only change: the scenario's scratch and socket paths honour `E2E_TMP`
+(`${E2E_TMP:-/tmp/opencode}`); this box's `/tmp` is a full tmpfs and the launcher wrapper exports
+`E2E_TMP` under `~/.cache/horizon-e2e`. No assertion changed.
+
+Package: `enderio.hmod`, **49,161 B**, sha256
+`d85004c41de5abca2b7e9b7e8a892449c40edf0c6a835328dc95ef165e12f3ee`.
+
+## Slice 3 — per-side redstone control (0.2.2, 2026-11-21)
+
+**The gap line** (§"Slice boundary and gaps" item 2 above): *"the **conduit screen** (menu/slots/toggles),
+the **redstone control**"*. The screen is machines-tier UI and stays a gap; the **redstone control** is the
+per-side rule the ticker consults, so it is this slice — a block-entity setting and one read of the level,
+not a new block, renderer or screen. `FINDINGS.md` ("Next slices" item 2) names it too.
+
+### What upstream actually does (read, not guessed)
+
+Repository `Team-EnderIO/EnderIO` at `befd71596adaa091ce4762b6e446629f211ededd` (2026-11-18, shallow
+clone in `/tmp`, deleted after the findings; the jar is 8.2.12-beta, the commit is `main`):
+
+| File | Behaviour |
+|---|---|
+| `api/io/RedstoneControl.java` | `ALWAYS_ACTIVE(0)`, `ACTIVE_WITH_SIGNAL(1)`, `ACTIVE_WITHOUT_SIGNAL(2)`, `NEVER_ACTIVE(3)`; `isActive(signal)` is `true` / `signal` / `!signal` / `false`; `isRedstoneSensitive()` only for the two signal modes |
+| `content/conduits/type/item/ItemConduitConnectionConfig.java` | `DEFAULT = (insert false, extract true, …, extractRedstoneControl NEVER_ACTIVE, …)`; `canExtract` is `isExtract() && (sensitive ? isActive(signal) : control == ALWAYS_ACTIVE)` |
+| `content/conduits/bundle/ConduitBundleBlockEntity.java:1045-1050` | the signal is `level.hasNeighborSignal(pos)` (plus a redstone conduit's dye channel, not ported) |
+| `content/conduits/network/ConduitNetworkImpl.java:424-435` | `canExtract` decides which sides become extract connections; the ticker then only walks those |
+| `gametest/…/conduits/item/ItemConduitTests.java` (`itemConduitBasicTransfer`) | with `NEVER_ACTIVE` the item stays in the source; it moves only after the same side is set to `ALWAYS_ACTIVE` |
+
+**So a fresh conduit extracts nothing** — its extract *toggle* is on, its redstone control is
+`never_active`, and `canExtract` answers false. Slice 1 reproduced the toggle and missed the gate, which
+made every fresh conduit move items. That is a port error, not an upstream defect: **corrected here** (see
+the table below).
+
+### The change
+
+- `src/runtime.rs`: `RedstoneControl` (four modes, upstream ids and names, `is_active`, `is_sensitive`,
+  `named` with the four serialized names plus `always`/`with_signal`/`without_signal`/`never`);
+  `ConduitConfig` gains `extract_control: [RedstoneControl; 6]` (default `never_active`) and
+  `can_extract(face, has_signal)` = the toggle **and** the mode; the saved shape is now `Saved`
+  (insert, extract, round robin, six control ids). A damaged id reads as `never_active`.
+- `src/support.rs`: the block entity's compound gains `extractControl` (`IntArray` of six ids, face order;
+  absent/wrong length/wrong type = all `never_active`, so a 0.2.1 world keeps working); `/enderio info`
+  prints a third line naming the sides whose control is not the default; `/enderio config … redstone
+  <mode>` sets one. The option and value are parsed **before** the conduit is looked up, so a typo cannot
+  leave a half-applied write. `endpoints()` reads `LevelRef::has_neighbor_signal` once per conduit per
+  cycle and gates each side's extraction through `ConduitConfig::can_extract`.
+- `ConduitConfig`, not `Config`: the generated `uses.json` resolves names against the SDK surface, so the
+  local `Config` was recorded as the SDK's `type:Config` (`built_at: src/runtime.rs`) and `fits` refused
+  every other build ("the type `Config` can no longer be built with a literal"). The rename is the fix
+  `artifacts`/`bhc` recorded on 2026-11-20; `uses.json` was not hand-edited.
+
+### Red → green (TDD)
+
+Tests first, with `todo!()` bodies for the new rule, so the red run names the behaviour that is missing:
+
+```
+test runtime::tests::a_fresh_conduit_extracts_nothing_until_its_redstone_control_is_set ... FAILED
+test runtime::tests::a_sides_redstone_control_gates_its_extraction ... FAILED
+test runtime::tests::config_round_trips_through_its_saved_masks ... FAILED
+test runtime::tests::redstone_controls_keep_upstreams_ids_and_names ... FAILED
+test runtime::tests::the_extract_toggle_still_wins_over_an_active_redstone_control ... FAILED
+test runtime::tests::the_per_side_redstone_controls_round_trip_through_the_saved_config ... FAILED
+…
+test result: FAILED. 16 passed; 9 failed; …          (`evidence/enderio/sdk-test-red.log`)
+
+thread 'runtime::tests::a_fresh_conduit_extracts_nothing_until_its_redstone_control_is_set' (205817) panicked at src/runtime.rs:195:9:
+not yet implemented
+```
+
+Then the glue's own red, with the rule already green (the readout and the saved array were missing):
+
+```
+thread 'support::tests::the_config_round_trips_through_the_saved_compound' (210485) panicked at src/support.rs:648:9:
+assertion `left == right` failed
+  left: ConduitConfig { insert: 36, extract: 62, round_robin: true, extract_control: [NeverActive, NeverActive, NeverActive, NeverActive, NeverActive, NeverActive] }
+ right: ConduitConfig { insert: 36, extract: 62, round_robin: true, extract_control: [NeverActive, ActiveWithSignal, NeverActive, NeverActive, AlwaysActive, NeverActive] }
+thread 'support::tests::the_info_readout_names_the_sides_whose_redstone_control_is_not_the_default' (210486) panicked at src/support.rs:132:5:
+not yet implemented
+```
+`evidence/enderio/sdk-glue-red.log`. Green: **27 passed, 0 failed** (`sdk-test.log`).
+
+### Ladder (pin `0a875da` / mixins `e59da90`, every step through `build-slot.sh`, `CARGO_INCREMENTAL=0`)
+
+| Step | Command | Result |
+|---|---|---|
+| runtime + glue red | `cargo test --offline` | **16 passed, 9 failed** (`sdk-test-red.log`), then **24 passed, 3 failed** (`sdk-glue-red.log`) |
+| tests | `cargo test --offline` | **27 passed**, 0 failed — `sdk-test.log` |
+| lints | `cargo clippy --all-targets --offline -- -D warnings` | exit 0, **0 warnings** — `sdk-clippy.log` |
+| format | `cargo fmt --check` | exit 0 — `sdk-fmt.log` |
+| package ×2 | `rm -f Cargo.lock; cargo horizon-mod build`, twice, `cmp` | **byte-identical**, **53,656 B**, 20 entries, no `Cargo.lock` — `sdk-build{,-second}.log`, `sdk-entries.txt` |
+| check | `cargo horizon-mod check enderio.hmod` | `enderio 0.2.2 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)`, **exit 0** — `sdk-check.log` |
+| fits (the pin) | `cargo horizon-mod fits enderio.hmod --build 0a875da` | `0a875da  made for`, exit 0 — `sdk-fits.log` |
+| fits (a different build) | `cargo horizon-mod fits enderio.hmod --build 0b14f8a` | `0b14f8a  fits`, exit 0 — `sdk-fits-other.log` |
+| gate | `python3 ports/tools/verify-sdk-package.py enderio` | **1/1** |
+| in game | `HORIZON_E2E_INSTANCE=enderio-e2e ports/tools/launcher-game.sh build enderio` then `build-slot.sh run --step e2e -- bash ports/enderio/tools/e2e.sh` | `PASS` + `EXIT:0` — `evidence/enderio-e2e/e2e-launcher-0.2.2.log` |
+| control (the same Nightly, no package) | `GAME=$CONTROL_GAME …` | `FAIL: expected 'Conduit: links west,east', got ''` + `EXIT:1` — `e2e-launcher-control-0.2.2.log` |
+| fail-capability | `SELFTEST=1 …` | `FAIL: SELFTEST: the source chest is empty (5 stone moved), so the check is alive` + `EXIT:1` — `e2e-launcher-selftest-0.2.2.log` |
+| log gate | `python3 ports/tools/check-e2e-logs.py enderio-e2e --strict` | `logs=6 ok=6 missing-exit=0 bad-exit=0` |
+
+The in-game legs were run against a game the launcher built **from this package** at `0a875da`
+(`native-0a875da-6b1f9c3494ef`), on the instance `enderio-e2e` (the shared `e2e` instance is still on
+`native-0b14f8a-…`; repointing a shared instance is not this job's to do). The package's `uses.json`
+names `made_for: 0a875da…`.
+
+### In-game scenario (from `evidence/enderio-e2e/e2e-launcher-0.2.2.log`)
+
+```
+== A: a conduit moves 5 stone from the west chest to the east chest ==
+  source before: 5, target before: 0
+  Conduit: links west,east
+  Conduit: redstone never_active on every side
+  conduit state: enderio:conduit[down=false,east=true,north=false,south=false,up=false,west=true]
+  source after: 0, target after: 5
+== G: the extract side's redstone control gates extraction (active_with_signal) ==
+  bad value reply: Unknown redstone control 'sometimes': always_active, active_with_signal, active_without_signal or never_active.
+  unpowered: source 5, target 0
+  Conduit: redstone west=active_with_signal
+  powered: source 0, target 5
+  unpowered again with 5 more: source 5, target 5
+== H: active_without_signal is the mirror image (control) ==
+  unpowered: source 0, target 5
+  powered with 5 more: source 5, target 5
+```
+
+What A and G prove that slice 1's run did not: the **same rig** that moves 5 stone with `always_active`
+and insertion on moves nothing with the fresh `never_active` control (45 ticks, two cycles); with
+`active_with_signal` it moves nothing until a redstone block is placed above the conduit, moves all five in
+the first cycle after it, and — with the refilled source — moves nothing again once the block is removed.
+H gives the mirror: `active_without_signal` moves unpowered and stops when powered. Every phase is a
+fresh count from `ctl container`, and each one would fail if the gate were dropped (with no gate, G's
+unpowered phase moves the stone and H's powered phase does too). The control leg fails at A's first
+assertion on a game without the package, so no assertion passes vacuously.
+
+### Coverage of the jar's families
+
+| Family | State | Where it is proved |
+|---|---|---|
+| the conduit block + item (texture, models, lang, tab) | **tested** | A (`setblock`, block state), F (break drops `enderio:conduit`), control leg (the id is unknown without the package) |
+| six-side connection state | **tested** | A: `Conduit: links west,east` + the block-state line |
+| per-side insert/extract toggles | **tested** | A (insert on/off), C (default off), D/E (movement only when on) |
+| **per-side redstone control** (this slice) | **tested** | A (default `never_active` extracts nothing), G (`active_with_signal`, powered/unpowered/again), H (`active_without_signal`), bad-value refusal |
+| transfer rate/cycle (4 items per 20 ticks) | **tested** | E (4 of 20 in 25 ticks) |
+| `/enderio info|config` | **tested** | A, G: the parsed chat replies (`Conduit: links …`, `Conduit: redstone …`, the refusal) |
+| loot table (self-drop) | **tested** | F (`drops: {"enderio:conduit": 1}` + one item entity) |
+| item filters (extract/insert filter slots) | **not ported** | needs the filter items and their own configuration surface; gap 1 |
+| speed tiers (enhanced/ender item conduit) | **not ported** | needs the bundle/type component; gap 1 — see the measured rate note below |
+| priority, dye channels, self-feed | **not ported** | gap 1/2 |
+| the conduit screen (menu/slots) | **not ported** | machines-tier UI; gap 2 (the commands stand in) |
+| the bundle, facades, Yeta Wrench, Conduit Probe, waterlogging | **not ported** | gap 3 |
+| energy / fluid / redstone conduits | **not ported** | gap 4 |
+| machines, mobs/armour/items, the alloy system + recipe | **not ported** | gaps 5–7 |
+| the arms' block-entity renderer | **not ported** | cosmetic deviation (state properties drive the model); gap 8 |
+| the conduit recipe | **not ported** | needs the alloy system (`conduit_binder`, `c:ingots/conductive_alloy`); gap 7 |
+
+### Measured, not fixed: the item conduit's rate
+
+The jar's own conduit data says `data/enderio/enderio/conduit/item.json` → `"transfer_rate": 32` with the
+`ticks_per_cycle` codec default 20, and `ItemConduitTicker` uses `transferRatePerCycle()` as its per-cycle
+budget; the port still moves `SPEED = 4`, the **codec fallback for pre-8.x data** (`ItemConduit.CODEC`'s
+`optionalFieldOf("transfer_rate", 4)`), which the modern jar's data overrides. That is gap 1's business
+(the tier values `32`/`64`/`64 @ 10 ticks` all come from the same data), not this slice's, so it is recorded
+here with the file/line and left for the tiers slice rather than smuggled in with the redstone change.
+
+Skills: superpowers/using-superpowers, brainstorming, writing-plans, test-driven-development, verification-before-completion; BeautifulRust/rust-best-practices
+
+### Changelog (0.2.2)
+
+> **0.2.2 — per-side redstone control, and the fresh-conduit default corrected.** Every side's extraction
+> now obeys an upstream `RedstoneControl` (`always_active`, `active_with_signal`, `active_without_signal`,
+> `never_active`) saved beside the insert/extract toggles and read from the conduit's neighbour signal. A
+> fresh conduit no longer moves items: upstream's default control is `never_active`, whose `canExtract`
+> answers false — set the source side's control (`/enderio config <x> <y> <z> <side> redstone
+> always_active`) and the destination's insert. `/enderio info` prints the sides whose control is not the
+> default. Republished at SDK `0a875da…` (mixins `e59da90…`, unchanged) for Minecraft 26.3; `runtime.rs`'s
+> tests grew from 10 to 15 and the glue's from 10 to 12 (27 total). Package: 20 entries, **53,656 B**,
+> sha256 `50b385b1b648cfd837394b7444ac0e79e33fe1762601ddd4b579f99eaba516c0`; `check` exit 0, `fits
+> 0a875da` **made for**, `fits 0b14f8a` **fits**.

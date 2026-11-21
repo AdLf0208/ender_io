@@ -20,13 +20,13 @@ use mod_api::{
     BlockEntityPart, BlockEntityRef, BlockEntityTickEvent, BlockEntityTickReply,
     BlockEntityTicksEvent, BlockKey, BlockPart, BlockUpdateFlags, Capability, Command,
     CommandArgumentValue, Compound, Direction, Flow, Host, HostTransaction, ITEMS, ItemResource,
-    LevelRef, RegisterCommandsEvent, ResourceHandler, RunModCommandEvent, ServerHost, Tag, Text,
-    move_resources,
+    LevelRef, ResourceHandler, RunModCommandEvent, ServerHost, Tag, Text, move_resources,
 };
 
 use crate::runtime::{
-    CYCLE_TICKS, Config, FACE_COUNT, FACE_NAMES, Face, Neighbour, Port, SPEED, connection_bits,
-    face_named, face_normal, insert_order, is_connected, is_cycle_tick, ports,
+    CYCLE_TICKS, ConduitConfig, FACE_COUNT, FACE_NAMES, Face, Neighbour, Port, RedstoneControl,
+    SPEED, Saved, connection_bits, face_named, face_normal, insert_order, is_connected,
+    is_cycle_tick, ports,
 };
 
 /// The conduit bundle block (and its item).
@@ -35,7 +35,7 @@ pub(crate) const CONDUIT: &str = "enderio:conduit";
 /// The readouts 0.1.0 printed, byte for byte: the existing e2e assertions match them.
 pub(crate) const USAGE_INFO: &str = "Usage: /enderio info <x> <y> <z>";
 pub(crate) const USAGE_CONFIG: &str =
-    "Usage: /enderio config <x> <y> <z> <side> <insert|extract|round> <on|off>";
+    "Usage: /enderio config <x> <y> <z> <side> <insert|extract|round|redstone> <on|off|mode>";
 pub(crate) const NO_CONDUIT: &str = "No conduit there.";
 
 type Pos = [i32; 3];
@@ -71,21 +71,39 @@ fn int(nbt: &Compound, name: &str) -> Option<i32> {
 /// `ItemConduitConnectionConfig.DEFAULT`.
 const DEFAULT_EXTRACT: u8 = (1 << FACE_COUNT) - 1;
 
-/// A conduit's saved configuration; a fresh conduit has upstream's defaults (extract
-/// everywhere, insert nowhere, no round robin), which is also what an empty compound reads as.
-fn read_config(nbt: &Compound) -> Config {
-    Config::from_saved(
-        int(nbt, "insert").unwrap_or(0),
-        int(nbt, "extract").unwrap_or(i32::from(DEFAULT_EXTRACT)),
-        int(nbt, "roundRobin").unwrap_or(0) != 0,
-    )
+/// A conduit's saved configuration; a fresh conduit has upstream's defaults (every side's
+/// extract toggle on, insert nowhere, no round robin, extraction gated by `never_active`),
+/// which is also what an empty compound reads as.
+fn read_config(nbt: &Compound) -> ConduitConfig {
+    ConduitConfig::from_saved(Saved {
+        insert: int(nbt, "insert").unwrap_or(0),
+        extract: int(nbt, "extract").unwrap_or(i32::from(DEFAULT_EXTRACT)),
+        round_robin: int(nbt, "roundRobin").unwrap_or(0) != 0,
+        extract_control: extract_controls(nbt),
+    })
 }
 
-fn write_config(nbt: &mut Compound, config: &Config) {
-    let (insert, extract, round_robin) = config.saved();
-    put(nbt, "insert", Tag::Int(insert));
-    put(nbt, "extract", Tag::Int(extract));
-    put(nbt, "roundRobin", Tag::Int(i32::from(round_robin)));
+/// The six per-side redstone-control ids, in face order. Absent (a 0.2.1 world), the wrong
+/// length, or another tag type reads as all `never_active`, the fresh conduit's default.
+fn extract_controls(nbt: &Compound) -> [i32; FACE_COUNT] {
+    match tag(nbt, "extractControl") {
+        Some(Tag::IntArray(ids)) if ids.len() == FACE_COUNT => {
+            std::array::from_fn(|face| ids[face])
+        }
+        _ => [RedstoneControl::NeverActive.saved(); FACE_COUNT],
+    }
+}
+
+fn write_config(nbt: &mut Compound, config: &ConduitConfig) {
+    let saved = config.saved();
+    put(nbt, "insert", Tag::Int(saved.insert));
+    put(nbt, "extract", Tag::Int(saved.extract));
+    put(nbt, "roundRobin", Tag::Int(i32::from(saved.round_robin)));
+    put(
+        nbt,
+        "extractControl",
+        Tag::IntArray(saved.extract_control.to_vec()),
+    );
 }
 
 /// The faces a predicate picks, as `north,south`.
@@ -123,13 +141,65 @@ fn config_line(extract: &str, insert: &str, round_robin: bool) -> String {
     )
 }
 
+/// `/enderio info`'s redstone line: the sides whose extraction control is not the fresh
+/// default, or one line saying every side is still `never_active`.
+fn redstone_line(config: &ConduitConfig) -> String {
+    let modes: Vec<String> = (0..FACE_COUNT)
+        .filter(|&face| config.extract_control(face) != RedstoneControl::NeverActive)
+        .map(|face| {
+            format!(
+                "{}={}",
+                FACE_NAMES[face],
+                config.extract_control(face).name()
+            )
+        })
+        .collect();
+    if modes.is_empty() {
+        "Conduit: redstone never_active on every side".to_string()
+    } else {
+        format!("Conduit: redstone {}", modes.join(","))
+    }
+}
+
+/// One `/enderio config` write, parsed before the conduit is touched so a typo cannot leave a
+/// half-applied change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Setting {
+    Insert(bool),
+    Extract(bool),
+    Round(bool),
+    Redstone(RedstoneControl),
+}
+
+impl Setting {
+    /// The configuration with this setting applied to `face`.
+    fn apply(self, config: ConduitConfig, face: Face) -> ConduitConfig {
+        match self {
+            Setting::Insert(on) => config.with_insert(face, on),
+            Setting::Extract(on) => config.with_extract(face, on),
+            Setting::Round(on) => config.with_round_robin(on),
+            Setting::Redstone(control) => config.with_extract_control(face, control),
+        }
+    }
+
+    /// The value as the confirmation prints it: `on`/`off`, or the mode's upstream name.
+    fn value_text(self) -> &'static str {
+        match self {
+            Setting::Insert(on) | Setting::Extract(on) | Setting::Round(on) => {
+                if on {
+                    "on"
+                } else {
+                    "off"
+                }
+            }
+            Setting::Redstone(control) => control.name(),
+        }
+    }
+}
+
 /// `/enderio config`'s confirmation.
-fn set_line(face: Face, option: &str, on: bool) -> String {
-    format!(
-        "Conduit: {} {option} now {}",
-        FACE_NAMES[face],
-        if on { "on" } else { "off" }
-    )
+fn set_line(face: Face, option: &str, value: &str) -> String {
+    format!("Conduit: {} {option} now {value}", FACE_NAMES[face])
 }
 
 /// The position one face reaches.
@@ -221,7 +291,7 @@ fn config_at(
     level: LevelRef,
     pos: Pos,
     conduit: BlockKey,
-) -> Option<Config> {
+) -> Option<ConduitConfig> {
     conduit_at(host, level, pos, conduit)
         .and_then(|entity| entity.data(host))
         .map(|data| read_config(&data))
@@ -325,7 +395,10 @@ struct Endpoint {
     port: Port,
 }
 
-/// The inventories the network's conduits reach, in conduit then face order.
+/// The inventories the network's conduits reach, in conduit then face order. Each side's
+/// extraction is gated here by its redstone control and the conduit's own signal (upstream
+/// `ConduitBundleBlockEntity.hasRedstoneSignal` = `level.hasNeighborSignal(pos)`), so the
+/// cycle below only sees the sides that may extract now.
 fn endpoints(
     host: &mut dyn ServerHost,
     level: LevelRef,
@@ -338,10 +411,12 @@ fn endpoints(
             continue;
         };
         let bits = connection_bits(neighbours(host, level, pos, conduit));
-        for port in ports(bits, &config) {
+        let has_signal = level.has_neighbor_signal(host, pos);
+        for mut port in ports(bits, &config) {
             if neighbour(host, level, pos, port.face, conduit) != Neighbour::Inventory {
                 continue;
             }
+            port.extract = config.can_extract(port.face, has_signal);
             found.push(Endpoint {
                 conduit: pos,
                 face: port.face,
@@ -457,14 +532,19 @@ fn feedback(host: &mut dyn ServerHost, line: &str) {
     let _ = host.commands().feedback(Text::literal(line));
 }
 
-/// Declare `/enderio config` and `/enderio info`.
-pub(crate) fn declare_commands(event: &mut RegisterCommandsEvent<'_>) {
-    event.commands.push(Command::new(
+/// Declare `/enderio config` and `/enderio info`, both operator-only (level 2).
+///
+/// `config` writes a conduit's per-side extraction and insertion, and `info` reads the same
+/// configuration, at coordinates the caller chooses: the review of 2026-11-18 found that a
+/// level-0 registration let any player redirect another player's item transfers from any
+/// distance. Upstream's own controls are its conduit screen and probe, which are not ported,
+/// so both commands are operator diagnostics.
+pub(crate) fn declare_commands(commands: &mut Vec<Command>) {
+    commands.push(Command::op(
         "enderio config <pos:block_pos> <side:word> <option:word> <value:word>",
+        2,
     ));
-    event
-        .commands
-        .push(Command::new("enderio info <pos:block_pos>"));
+    commands.push(Command::op("enderio info <pos:block_pos>", 2));
 }
 
 /// The level a command runs in, after `execute in`.
@@ -528,6 +608,7 @@ pub(crate) fn run_command(host: &mut dyn ServerHost, event: &mut RunModCommandEv
                 config.round_robin(),
             ),
         );
+        feedback(host, &redstone_line(&config));
         return Flow::Cancel;
     }
     let Some(CommandArgumentValue::String(side)) = invocation.argument("side") else {
@@ -549,9 +630,39 @@ pub(crate) fn run_command(host: &mut dyn ServerHost, event: &mut RunModCommandEv
         );
         return Flow::Cancel;
     };
-    let Some(on) = on_off(value) else {
-        feedback(host, &format!("'{value}' is not on or off."));
-        return Flow::Cancel;
+    let option = option.to_lowercase();
+    let setting = match option.as_str() {
+        "insert" | "extract" | "round" | "round_robin" => {
+            let Some(on) = on_off(value) else {
+                feedback(host, &format!("'{value}' is not on or off."));
+                return Flow::Cancel;
+            };
+            match option.as_str() {
+                "insert" => Setting::Insert(on),
+                "extract" => Setting::Extract(on),
+                _ => Setting::Round(on),
+            }
+        }
+        "redstone" => {
+            let Some(control) = RedstoneControl::named(value) else {
+                feedback(
+                    host,
+                    &format!(
+                        "Unknown redstone control '{value}': always_active, active_with_signal, \
+                         active_without_signal or never_active."
+                    ),
+                );
+                return Flow::Cancel;
+            };
+            Setting::Redstone(control)
+        }
+        other => {
+            feedback(
+                host,
+                &format!("Unknown option '{other}': insert, extract, round or redstone."),
+            );
+            return Flow::Cancel;
+        }
     };
     let Some(entity) = conduit_at(host, level, pos, conduit) else {
         feedback(host, NO_CONDUIT);
@@ -561,19 +672,7 @@ pub(crate) fn run_command(host: &mut dyn ServerHost, event: &mut RunModCommandEv
         feedback(host, NO_CONDUIT);
         return Flow::Cancel;
     };
-    let mut config = read_config(&data);
-    match option.to_lowercase().as_str() {
-        "insert" => config = config.with_insert(face, on),
-        "extract" => config = config.with_extract(face, on),
-        "round" | "round_robin" => config = config.with_round_robin(on),
-        other => {
-            feedback(
-                host,
-                &format!("Unknown option '{other}': insert, extract or round."),
-            );
-            return Flow::Cancel;
-        }
-    }
+    let config = setting.apply(read_config(&data), face);
     write_config(&mut data, &config);
     // The saved compound is the config, so the write goes back through the entity's own load
     // path: the chunk is marked changed and clients get the block update.
@@ -581,7 +680,7 @@ pub(crate) fn run_command(host: &mut dyn ServerHost, event: &mut RunModCommandEv
         feedback(host, NO_CONDUIT);
         return Flow::Cancel;
     }
-    feedback(host, &set_line(face, &option.to_lowercase(), on));
+    feedback(host, &set_line(face, &option, setting.value_text()));
     Flow::Cancel
 }
 
@@ -589,6 +688,29 @@ pub(crate) fn run_command(host: &mut dyn ServerHost, event: &mut RunModCommandEv
 mod tests {
     use super::*;
     use crate::runtime::{DOWN, EAST, NORTH, UP, WEST};
+
+    /// The review finding (2026-11-18): `config` writes a conduit's per-side extraction and
+    /// insertion at coordinates the caller chooses, and `info` reads the same configuration of
+    /// another player's conduit, so a level-0 registration let any player do either. Both are
+    /// operator-only; this test fails on a `Command::new` registration (level 0).
+    #[test]
+    fn the_conduit_commands_are_operator_only() {
+        let mut commands = Vec::new();
+        declare_commands(&mut commands);
+        assert_eq!(commands.len(), 2, "config and info");
+        for command in &commands {
+            assert!(
+                command.usage.starts_with("enderio "),
+                "{} is this mod's",
+                command.usage
+            );
+            assert_eq!(
+                command.level, 2,
+                "{} acts on a conduit at chosen coordinates",
+                command.usage
+            );
+        }
+    }
 
     #[test]
     fn a_fresh_compound_reads_upstreams_default_configuration() {
@@ -602,11 +724,13 @@ mod tests {
 
     #[test]
     fn the_config_round_trips_through_the_saved_compound() {
-        let config = Config::new()
+        let config = ConduitConfig::new()
             .with_insert(NORTH, true)
             .with_insert(EAST, true)
             .with_extract(DOWN, false)
-            .with_round_robin(true);
+            .with_round_robin(true)
+            .with_extract_control(UP, RedstoneControl::ActiveWithSignal)
+            .with_extract_control(WEST, RedstoneControl::AlwaysActive);
         let mut nbt = Compound::new();
         write_config(&mut nbt, &config);
         assert_eq!(read_config(&nbt), config);
@@ -614,6 +738,49 @@ mod tests {
         assert_eq!(int(&nbt, "insert"), Some(0b10_0100));
         assert_eq!(int(&nbt, "extract"), Some(0b11_1110));
         assert_eq!(int(&nbt, "roundRobin"), Some(1));
+        // The new key is one id per side, in face order (down, up, north, south, west, east).
+        assert_eq!(
+            tag(&nbt, "extractControl"),
+            Some(&Tag::IntArray(vec![3, 1, 3, 3, 0, 3]))
+        );
+    }
+
+    #[test]
+    fn a_compound_without_a_usable_redstone_array_reads_never_active() {
+        // A 0.2.1 world has no key at all; a hand-edited or damaged one may have the wrong
+        // shape or an id outside 0..=3. Every such side behaves as a fresh conduit.
+        let fresh = ConduitConfig::new();
+        assert_eq!(read_config(&Compound::new()), fresh);
+
+        let mut short = Compound::new();
+        put(&mut short, "extractControl", Tag::IntArray(vec![0, 0]));
+        assert_eq!(read_config(&short), fresh);
+
+        let mut damaged = Compound::new();
+        put(
+            &mut damaged,
+            "extractControl",
+            Tag::IntArray(vec![0, 9, -1, 3, 3, 3]),
+        );
+        let config = read_config(&damaged);
+        assert_eq!(config.extract_control(DOWN), RedstoneControl::AlwaysActive);
+        assert_eq!(config.extract_control(UP), RedstoneControl::NeverActive);
+        assert_eq!(config.extract_control(NORTH), RedstoneControl::NeverActive);
+    }
+
+    #[test]
+    fn the_info_readout_names_the_sides_whose_redstone_control_is_not_the_default() {
+        assert_eq!(
+            redstone_line(&ConduitConfig::new()),
+            "Conduit: redstone never_active on every side"
+        );
+        let config = ConduitConfig::new()
+            .with_extract_control(WEST, RedstoneControl::AlwaysActive)
+            .with_extract_control(EAST, RedstoneControl::ActiveWithSignal);
+        assert_eq!(
+            redstone_line(&config),
+            "Conduit: redstone west=always_active,east=active_with_signal"
+        );
     }
 
     #[test]
@@ -621,7 +788,10 @@ mod tests {
         let mut nbt = Compound::new();
         put(&mut nbt, "insert", Tag::Int(-1));
         put(&mut nbt, "extract", Tag::Int(0x7fff));
-        assert_eq!(read_config(&nbt), Config::new().with_round_robin(false));
+        assert_eq!(
+            read_config(&nbt),
+            ConduitConfig::new().with_round_robin(false)
+        );
     }
 
     #[test]
@@ -639,14 +809,14 @@ mod tests {
         assert_eq!(USAGE_INFO, "Usage: /enderio info <x> <y> <z>");
         assert_eq!(
             USAGE_CONFIG,
-            "Usage: /enderio config <x> <y> <z> <side> <insert|extract|round> <on|off>"
+            "Usage: /enderio config <x> <y> <z> <side> <insert|extract|round|redstone> <on|off|mode>"
         );
         assert_eq!(NO_CONDUIT, "No conduit there.");
     }
 
     #[test]
     fn the_config_readout_names_some_faces_or_none() {
-        let config = Config::new()
+        let config = ConduitConfig::new()
             .with_insert(EAST, true)
             .with_extract(DOWN, false)
             .with_extract(WEST, false);
@@ -664,10 +834,14 @@ mod tests {
     #[test]
     fn the_config_confirmation_names_the_side_and_the_state() {
         assert_eq!(
-            set_line(EAST, "insert", true),
+            set_line(EAST, "insert", "on"),
             "Conduit: east insert now on"
         );
-        assert_eq!(set_line(UP, "round", false), "Conduit: up round now off");
+        assert_eq!(set_line(UP, "round", "off"), "Conduit: up round now off");
+        assert_eq!(
+            set_line(WEST, "redstone", "always_active"),
+            "Conduit: west redstone now always_active"
+        );
     }
 
     #[test]

@@ -1,5 +1,25 @@
 # Validation
 
+> **Current (0.2.2, `0a875da`, 2026-11-21):** the slice-3 (per-side redstone control) ladder is in
+> [`notes.md`](notes.md#slice-3--per-side-redstone-control-022-2026-11-21); the package's evidence is
+> `../_shared/evidence/enderio/sdk-*.log` and the in-game legs
+> `../_shared/evidence/enderio-e2e/e2e-launcher{,-control,-selftest}-0.2.2.log`.
+>
+> | Check | Result |
+> |---|---|
+> | `cargo test --offline` | **27 passed**, 0 failed (red first: 16/9, then 24/3) |
+> | `cargo clippy --all-targets --offline -- -D warnings` | exit 0, 0 warnings |
+> | `cargo fmt --check` | exit 0 |
+> | `cargo horizon-mod build` ×2, `cmp` | byte-identical, **53,656 B**, 20 entries, no `Cargo.lock` |
+> | `cargo horizon-mod check enderio.hmod` | exit 0, `enderio 0.2.2 … 0a875da…/e59da90…` |
+> | `cargo horizon-mod fits … --build 0a875da` | `0a875da  made for`, exit 0 |
+> | `cargo horizon-mod fits … --build 0b14f8a` (a different build) | `0b14f8a  fits`, exit 0 |
+> | `verify-sdk-package.py enderio` | 1/1 |
+> | in game (launcher-built, `enderio-e2e` instance) | `PASS` + `EXIT:0` |
+> | control (same Nightly, no package) | `FAIL: expected 'Conduit: links west,east', got ''` + `EXIT:1` |
+> | `SELFTEST=1` | `FAIL: SELFTEST: the source chest is empty …` + `EXIT:1` |
+> | `check-e2e-logs.py enderio-e2e --strict` | `logs=6 ok=6` |
+
 > **Historical (0.1.0, `.hnmod`):** the sections below record the retired format's ladder and its
 > in-game runs. The 0.2.0 SDK package's ladder is in
 > [`notes.md`](notes.md#migration-to-the-sdk-format-020-2026-11-18) and

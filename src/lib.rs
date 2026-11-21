@@ -5,7 +5,10 @@
 //! This slice keeps the per-side configuration in the block entity's saved compound (as
 //! upstream's node data is), draws the connection state as the block's six boolean properties,
 //! and moves the items at the end of the level's tick: every cycle, each extracting side hands
-//! up to [`runtime::SPEED`] items to the network's inserting sides.
+//! up to [`runtime::SPEED`] items to the network's inserting sides. Each side's extraction is
+//! gated by its own redstone control (`always_active`, `active_with_signal`,
+//! `active_without_signal`, or upstream's default `never_active`), read from the block's
+//! neighbour signal.
 //!
 //! The rules — the faces, the default configuration, the connection masks, the insert order and
 //! the cycle — live in [`runtime`], byte-identical to the retired `.hnmod` bundle's `runtime.rs`
@@ -82,7 +85,7 @@ impl Hooks for Mod {
 
     /// `/enderio info|config`.
     fn register_commands(&self, _host: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
-        support::declare_commands(event);
+        support::declare_commands(event.commands);
     }
 
     /// Run the two usages [`Hooks::register_commands`] declares.

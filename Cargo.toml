@@ -1,16 +1,17 @@
 [package]
 # Port of Ender IO 8.2.12-beta (Team-EnderIO/EnderIO, CC0 in the jar's `mods.toml`,
-# Unlicense text in the repository). Minecraft Java 1.21.1 NeoForge; the port
+# Unlicense text in the repository). The package is released under the Unlicense,
+# one licence for the Rust code and the carried content alike (0.2.1). Minecraft Java 1.21.1 NeoForge; the port
 # targets Horizon 26.3 at the pin in horizon-mod.toml. Clean-room Rust rewrite
 # from the mod's behaviour (FINDINGS.md); local-only until the maintainer
 # approves publishing (ARCHITECTURE.md §8).
 #
 # Cargo's name and version are not the mod's identity: horizon-mod.toml is.
 name = "enderio"
-version = "0.2.0"
+version = "0.2.2"
 edition = "2024"
-license = "CC0-1.0"
-description = "Ender IO for Horizon, slice 1: the item conduit and its item transfer"
+license = "Unlicense"
+description = "Ender IO for Horizon, slice 1: the item conduit, its item transfer and its per-side redstone control"
 publish = false
 
 [dependencies]

@@ -10,9 +10,13 @@
 - Licence text read from: the jar's `META-INF/neoforge.mods.toml` and
   <https://github.com/Team-EnderIO/EnderIO/blob/dev/1.21.1/LICENSE.txt> (the repository's
   public-domain dedication). Both are public-domain dedications → campaign licence rank 0.
-- This port is **CC0-1.0** (`Cargo.toml`), © 2026 the Horizon port authors, who dedicate it to
-  the public domain as the original does. `LICENSE` at the package root is the Unlicense text
-  the original ships.
+- **Licence of this package: Unlicense** — one licence for the code *and* the carried content,
+  the same SPDX id the registry entry lists and the same text the original's repository ships.
+  `Cargo.toml` declares `license = "Unlicense"` and `LICENSE` at the package root is that text.
+  © 2026 the Horizon port authors, who dedicate the whole package to the public domain; the
+  original's jar declares CC0, an equivalent public-domain dedication, and nothing here adds a
+  restriction the original did not have. (0.2.0 declared the Rust half CC0-1.0 while the entry
+  said Unlicense; the review of 2026-11-18 asked for one consistent licence, and this is it.)
 - Carried content provenance (every file, its source path in the jar and any change):
   [`../_shared/carry-work/enderio/SOURCE.md`](../_shared/carry-work/enderio/SOURCE.md).
 

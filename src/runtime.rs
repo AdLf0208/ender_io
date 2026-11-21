@@ -31,6 +31,90 @@ pub const SPEED: u32 = 4;
 /// Upstream `ItemConduit`'s `ticks_per_cycle` default: game ticks per cycle.
 pub const CYCLE_TICKS: u64 = 20;
 
+/// Upstream `RedstoneControl` (`api/io/RedstoneControl`): how a side's own
+/// redstone signal gates what it does. The item conduit applies it to
+/// extraction (`ItemConduitConnectionConfig.canExtract`); its default is
+/// [`RedstoneControl::NeverActive`], so a fresh conduit extracts nothing until
+/// the player sets one of the other three on the side.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RedstoneControl {
+    /// Acts whatever the signal is (upstream id 0).
+    AlwaysActive,
+    /// Acts only while the block beside it gives a signal (id 1).
+    ActiveWithSignal,
+    /// Acts only while there is no signal (id 2).
+    ActiveWithoutSignal,
+    /// Never acts (id 3, upstream's `ItemConduitConnectionConfig.DEFAULT`).
+    #[default]
+    NeverActive,
+}
+
+impl RedstoneControl {
+    /// Whether a side with this control acts, given its block's signal.
+    pub fn is_active(self, has_signal: bool) -> bool {
+        match self {
+            RedstoneControl::AlwaysActive => true,
+            RedstoneControl::ActiveWithSignal => has_signal,
+            RedstoneControl::ActiveWithoutSignal => !has_signal,
+            RedstoneControl::NeverActive => false,
+        }
+    }
+
+    /// Whether the mode reads the signal at all (upstream `isRedstoneSensitive`).
+    pub fn is_sensitive(self) -> bool {
+        matches!(
+            self,
+            RedstoneControl::ActiveWithSignal | RedstoneControl::ActiveWithoutSignal
+        )
+    }
+
+    /// The mode's upstream id, as the block entity saves it.
+    pub fn saved(self) -> i32 {
+        match self {
+            RedstoneControl::AlwaysActive => 0,
+            RedstoneControl::ActiveWithSignal => 1,
+            RedstoneControl::ActiveWithoutSignal => 2,
+            RedstoneControl::NeverActive => 3,
+        }
+    }
+
+    /// The mode an id names; a value outside 0..=3 falls back to
+    /// [`RedstoneControl::NeverActive`], the fresh-conduit default (the same
+    /// policy [`ConduitConfig::from_saved`] applies to a damaged mask).
+    pub fn from_saved(id: i32) -> Self {
+        match id {
+            0 => RedstoneControl::AlwaysActive,
+            1 => RedstoneControl::ActiveWithSignal,
+            2 => RedstoneControl::ActiveWithoutSignal,
+            _ => RedstoneControl::NeverActive,
+        }
+    }
+
+    /// The upstream serialized name (`always_active`).
+    pub fn name(self) -> &'static str {
+        match self {
+            RedstoneControl::AlwaysActive => "always_active",
+            RedstoneControl::ActiveWithSignal => "active_with_signal",
+            RedstoneControl::ActiveWithoutSignal => "active_without_signal",
+            RedstoneControl::NeverActive => "never_active",
+        }
+    }
+
+    /// The mode a name or short name sets: upstream's four serialized names,
+    /// plus `always`, `with_signal`, `without_signal` and `never`.
+    pub fn named(text: &str) -> Option<Self> {
+        match text.to_lowercase().as_str() {
+            "always_active" | "always" => Some(RedstoneControl::AlwaysActive),
+            "active_with_signal" | "with_signal" => Some(RedstoneControl::ActiveWithSignal),
+            "active_without_signal" | "without_signal" => {
+                Some(RedstoneControl::ActiveWithoutSignal)
+            }
+            "never_active" | "never" => Some(RedstoneControl::NeverActive),
+            _ => None,
+        }
+    }
+}
+
 /// Every face's connection bit, for [`connection_bits`]' `u8`.
 const ALL_FACES: u8 = (1 << FACE_COUNT) - 1;
 
@@ -80,30 +164,38 @@ pub fn is_connected(bits: u8, face: Face) -> bool {
 
 /// A conduit's per-side configuration (upstream
 /// `ItemConduitConnectionConfig`): which connected sides extract, which
-/// insert, and whether the extract sides round-robin their destinations.
+/// insert, whether the extract sides round-robin their destinations, and which
+/// redstone control gates each side's extraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Config {
+pub struct ConduitConfig {
     /// One bit per face that may insert.
     insert: u8,
-    /// One bit per face that may extract.
+    /// One bit per face that may extract (the toggle; the redstone control
+    /// decides whether an extracting side acts now).
     extract: u8,
     round_robin: bool,
+    /// The redstone control of each face's extraction, in face order.
+    extract_control: [RedstoneControl; FACE_COUNT],
 }
 
-impl Default for Config {
+impl Default for ConduitConfig {
     fn default() -> Self {
-        Config::new()
+        ConduitConfig::new()
     }
 }
 
-impl Config {
-    /// Upstream's default: extract from every side, insert nowhere, no round
-    /// robin.
+impl ConduitConfig {
+    /// Upstream's default: every side's extract toggle on, insert nowhere, no
+    /// round robin, and extraction gated by
+    /// [`RedstoneControl::NeverActive`] — so a fresh conduit moves nothing
+    /// until a side's redstone control is set (`ItemConduitConnectionConfig`
+    /// `canExtract`).
     pub const fn new() -> Self {
-        Config {
+        ConduitConfig {
             insert: 0,
             extract: ALL_FACES,
             round_robin: false,
+            extract_control: [RedstoneControl::NeverActive; FACE_COUNT],
         }
     }
 
@@ -119,52 +211,92 @@ impl Config {
         self.round_robin
     }
 
+    /// The redstone control of `face`'s extraction.
+    pub fn extract_control(&self, face: Face) -> RedstoneControl {
+        if face < FACE_COUNT {
+            self.extract_control[face]
+        } else {
+            RedstoneControl::NeverActive
+        }
+    }
+
+    /// Whether `face` extracts now: its toggle is on **and** its redstone
+    /// control is active for the block's signal.
+    pub fn can_extract(&self, face: Face, has_signal: bool) -> bool {
+        self.extract(face) && self.extract_control(face).is_active(has_signal)
+    }
+
     pub fn with_insert(self, face: Face, on: bool) -> Self {
-        Config {
+        ConduitConfig {
             insert: set(self.insert, face, on),
             ..self
         }
     }
 
     pub fn with_extract(self, face: Face, on: bool) -> Self {
-        Config {
+        ConduitConfig {
             extract: set(self.extract, face, on),
             ..self
         }
     }
 
     pub fn with_round_robin(self, on: bool) -> Self {
-        Config {
+        ConduitConfig {
             round_robin: on,
             ..self
         }
     }
 
-    /// The two side masks and the round-robin flag, the shape the block
-    /// entity saves (upstream keeps them in its node data).
-    pub fn saved(&self) -> (i32, i32, bool) {
-        (
-            i32::from(self.insert),
-            i32::from(self.extract),
-            self.round_robin,
-        )
+    /// `face`'s extraction under `control`.
+    pub fn with_extract_control(mut self, face: Face, control: RedstoneControl) -> Self {
+        if face < FACE_COUNT {
+            self.extract_control[face] = control;
+        }
+        self
     }
 
-    /// Restore the masks [`Config::saved`] wrote; bits past the six sides are
-    /// dropped, and a value that is no mask at all falls back to that mask's
-    /// default, so a damaged save behaves as a fresh conduit.
-    pub fn from_saved(insert: i32, extract: i32, round_robin: bool) -> Self {
+    /// The configuration as the block entity saves it (upstream keeps each
+    /// side's connection config in its node data).
+    pub fn saved(&self) -> Saved {
+        Saved {
+            insert: i32::from(self.insert),
+            extract: i32::from(self.extract),
+            round_robin: self.round_robin,
+            extract_control: std::array::from_fn(|face| self.extract_control[face].saved()),
+        }
+    }
+
+    /// Restore [`ConduitConfig::saved`]'s shape. Bits past the six sides are dropped
+    /// and an id outside 0..=3 reads as [`RedstoneControl::NeverActive`], so a
+    /// damaged save behaves as a fresh conduit.
+    pub fn from_saved(saved: Saved) -> Self {
         let mask = |value: i32, default: u8| {
             u8::try_from(value)
                 .map(|value| value & ALL_FACES)
                 .unwrap_or(default)
         };
-        Config {
-            insert: mask(insert, 0),
-            extract: mask(extract, ALL_FACES),
-            round_robin,
+        ConduitConfig {
+            insert: mask(saved.insert, 0),
+            extract: mask(saved.extract, ALL_FACES),
+            round_robin: saved.round_robin,
+            extract_control: std::array::from_fn(|face| {
+                RedstoneControl::from_saved(saved.extract_control[face])
+            }),
         }
     }
+}
+
+/// A conduit's saved configuration: the two side masks and the round-robin
+/// flag of slice 1, plus one redstone-control id per side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Saved {
+    /// The insert mask, one bit per face.
+    pub insert: i32,
+    /// The extract mask, one bit per face.
+    pub extract: i32,
+    pub round_robin: bool,
+    /// The redstone-control ids of the six faces, in face order.
+    pub extract_control: [i32; FACE_COUNT],
 }
 
 /// `mask` with `face`'s bit set or cleared.
@@ -188,8 +320,10 @@ pub struct Port {
     pub extract: bool,
 }
 
-/// The connected sides of a conduit, in face order, with their flags.
-pub fn ports(bits: u8, config: &Config) -> Vec<Port> {
+/// The connected sides of a conduit, in face order, with their flags. `extract` is the side's
+/// own toggle; the ticker asks [`ConduitConfig::can_extract`] with the conduit's signal to know whether
+/// it extracts now, since the redstone control lives beside the toggle.
+pub fn ports(bits: u8, config: &ConduitConfig) -> Vec<Port> {
     (0..FACE_COUNT)
         .filter(|&face| is_connected(bits, face))
         .map(|face| Port {
@@ -243,7 +377,7 @@ mod tests {
 
     #[test]
     fn the_default_config_extracts_from_every_side_and_inserts_nowhere() {
-        let config = Config::new();
+        let config = ConduitConfig::new();
         for face in 0..FACE_COUNT {
             assert!(config.extract(face), "face {face} extracts by default");
             assert!(!config.insert(face), "face {face} inserts only when set");
@@ -253,7 +387,7 @@ mod tests {
 
     #[test]
     fn config_toggles_one_side_and_keeps_the_others() {
-        let config = Config::new()
+        let config = ConduitConfig::new()
             .with_insert(NORTH, true)
             .with_extract(SOUTH, false)
             .with_round_robin(true);
@@ -266,15 +400,156 @@ mod tests {
 
     #[test]
     fn config_round_trips_through_its_saved_masks() {
-        let config = Config::new()
+        let config = ConduitConfig::new()
             .with_insert(NORTH, true)
             .with_insert(EAST, true)
             .with_extract(DOWN, false)
             .with_round_robin(true);
-        let (insert, extract, round_robin) = config.saved();
-        assert_eq!(Config::from_saved(insert, extract, round_robin), config);
-        assert_eq!(Config::from_saved(0, 0b11_1111, false), Config::new());
-        assert_eq!(Config::from_saved(-1, -1, false), Config::new());
+        let saved = config.saved();
+        assert_eq!(ConduitConfig::from_saved(saved), config);
+        let never = [RedstoneControl::NeverActive.saved(); FACE_COUNT];
+        assert_eq!(
+            ConduitConfig::from_saved(Saved {
+                insert: 0,
+                extract: 0b11_1111,
+                round_robin: false,
+                extract_control: never,
+            }),
+            ConduitConfig::new()
+        );
+        assert_eq!(
+            ConduitConfig::from_saved(Saved {
+                insert: -1,
+                extract: -1,
+                round_robin: false,
+                extract_control: [9; FACE_COUNT],
+            }),
+            ConduitConfig::new()
+        );
+    }
+
+    #[test]
+    fn a_fresh_conduit_extracts_nothing_until_its_redstone_control_is_set() {
+        // Upstream's `ItemConduitConnectionConfig.DEFAULT` has the extract toggle
+        // on and `RedstoneControl.NEVER_ACTIVE`, whose `canExtract` is false; the
+        // gametest moves an item only after `ALWAYS_ACTIVE` is set.
+        let fresh = ConduitConfig::new();
+        for face in 0..FACE_COUNT {
+            assert!(
+                !fresh.can_extract(face, false) && !fresh.can_extract(face, true),
+                "face {face} extracts on a fresh conduit"
+            );
+            assert!(
+                fresh
+                    .with_extract_control(face, RedstoneControl::AlwaysActive)
+                    .can_extract(face, false),
+                "face {face} does not extract under AlwaysActive"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sides_redstone_control_gates_its_extraction() {
+        let always = ConduitConfig::new().with_extract_control(EAST, RedstoneControl::AlwaysActive);
+        let with =
+            ConduitConfig::new().with_extract_control(EAST, RedstoneControl::ActiveWithSignal);
+        let without =
+            ConduitConfig::new().with_extract_control(EAST, RedstoneControl::ActiveWithoutSignal);
+        let never = ConduitConfig::new().with_extract_control(EAST, RedstoneControl::NeverActive);
+
+        assert!(always.can_extract(EAST, false) && always.can_extract(EAST, true));
+        assert!(!with.can_extract(EAST, false) && with.can_extract(EAST, true));
+        assert!(without.can_extract(EAST, false) && !without.can_extract(EAST, true));
+        assert!(!never.can_extract(EAST, false) && !never.can_extract(EAST, true));
+        // The control is per side: EAST's setting leaves WEST alone.
+        assert!(!always.can_extract(WEST, true));
+        assert!(!RedstoneControl::AlwaysActive.is_sensitive());
+        assert!(RedstoneControl::ActiveWithSignal.is_sensitive());
+        assert!(RedstoneControl::ActiveWithoutSignal.is_sensitive());
+        assert!(!RedstoneControl::NeverActive.is_sensitive());
+    }
+
+    #[test]
+    fn the_extract_toggle_still_wins_over_an_active_redstone_control() {
+        let config = ConduitConfig::new()
+            .with_extract(EAST, false)
+            .with_extract_control(EAST, RedstoneControl::AlwaysActive);
+        assert!(!config.extract(EAST), "the toggle is off");
+        assert!(
+            !config.can_extract(EAST, true),
+            "an off side still extracts"
+        );
+        // A face past the six is never extractable and reads as the default.
+        assert!(
+            !ConduitConfig::new()
+                .with_extract_control(FACE_COUNT, RedstoneControl::AlwaysActive)
+                .can_extract(FACE_COUNT, true)
+        );
+        assert_eq!(
+            ConduitConfig::new().extract_control(FACE_COUNT),
+            RedstoneControl::NeverActive
+        );
+    }
+
+    #[test]
+    fn redstone_controls_keep_upstreams_ids_and_names() {
+        let modes = [
+            (0, RedstoneControl::AlwaysActive, "always_active"),
+            (1, RedstoneControl::ActiveWithSignal, "active_with_signal"),
+            (
+                2,
+                RedstoneControl::ActiveWithoutSignal,
+                "active_without_signal",
+            ),
+            (3, RedstoneControl::NeverActive, "never_active"),
+        ];
+        for (id, control, name) in modes {
+            assert_eq!(control.saved(), id);
+            assert_eq!(control.name(), name);
+            assert_eq!(RedstoneControl::from_saved(id), control);
+            assert_eq!(RedstoneControl::named(name), Some(control));
+        }
+        for (name, control) in [
+            ("always", RedstoneControl::AlwaysActive),
+            ("with_signal", RedstoneControl::ActiveWithSignal),
+            ("without_signal", RedstoneControl::ActiveWithoutSignal),
+            ("never", RedstoneControl::NeverActive),
+        ] {
+            assert_eq!(RedstoneControl::named(name), Some(control), "{name}");
+        }
+        // A damaged id reads as the fresh default; an unknown word is no mode.
+        assert_eq!(RedstoneControl::from_saved(4), RedstoneControl::NeverActive);
+        assert_eq!(
+            RedstoneControl::from_saved(-1),
+            RedstoneControl::NeverActive
+        );
+        assert_eq!(RedstoneControl::named("sometimes"), None);
+        assert_eq!(RedstoneControl::named(""), None);
+    }
+
+    #[test]
+    fn the_per_side_redstone_controls_round_trip_through_the_saved_config() {
+        let config = ConduitConfig::new()
+            .with_extract_control(DOWN, RedstoneControl::AlwaysActive)
+            .with_extract_control(UP, RedstoneControl::ActiveWithSignal)
+            .with_extract_control(NORTH, RedstoneControl::ActiveWithoutSignal)
+            .with_insert(SOUTH, true);
+        let saved = config.saved();
+        assert_eq!(saved.extract_control, [0, 1, 2, 3, 3, 3]);
+        assert_eq!(ConduitConfig::from_saved(saved), config);
+        // A damaged id reads as the fresh default rather than an arbitrary mode.
+        let damaged = Saved {
+            extract_control: [7, -2, 2, 3, 3, 3],
+            ..saved
+        };
+        let restored = ConduitConfig::from_saved(damaged);
+        assert_eq!(restored.extract_control(DOWN), RedstoneControl::NeverActive);
+        assert_eq!(restored.extract_control(UP), RedstoneControl::NeverActive);
+        assert_eq!(
+            restored.extract_control(NORTH),
+            RedstoneControl::ActiveWithoutSignal,
+            "a valid id beside a damaged one still reads"
+        );
     }
 
     #[test]
@@ -308,7 +583,7 @@ mod tests {
             Neighbour::Nothing,
         ];
         let bits = connection_bits(neighbours);
-        let config = Config::new()
+        let config = ConduitConfig::new()
             .with_insert(UP, true)
             .with_extract(DOWN, false);
         assert_eq!(
